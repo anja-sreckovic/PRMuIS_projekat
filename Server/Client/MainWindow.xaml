@@ -17,7 +17,7 @@
             <TextBox x:Name="PortBox" Width="90" Text="50001" Margin="0,0,10,0" Background="#FF151A23" Foreground="White"/>
 
             <Button x:Name="ConnectBtn" Content="Connect" Width="110" Click="ConnectBtn_Click" Margin="0,0,8,0" Foreground="White" Background="#FF151A23"/>
-            <Button x:Name="DisconnectBtn" Content="Disconnect" Width="110" Click="DisconnectBtn_Click" IsEnabled="False" Foreground="White" Background="#FF151A23"/>
+            <Button x:Name="DisconnectBtn" Content="Disconnect" Width="110" Click="DisconnectBtn_Click" IsEnabled="False" Foreground="#FF838383" Background="#FF151A23"/>
 
             <TextBlock Text="Status:" VerticalAlignment="Center" Margin="16,0,6,0"/>
             <TextBlock x:Name="StatusText" Text="Disconnected" VerticalAlignment="Center" FontWeight="Bold"/>
@@ -30,7 +30,7 @@
         <DockPanel Grid.Row="2" HorizontalAlignment="Center">
             <TextBox x:Name="MessageBox" Width="400" Height="30" Margin="0,0,8,0"
                      KeyDown="MessageBox_KeyDown" Background="#FF151A23" Foreground="White"/>
-            <Button x:Name="SendBtn" Content="Send" Width="120" Click="SendBtn_Click" IsEnabled="False" Background="#FF151A23" Foreground="White"/>
+            <Button x:Name="SendBtn" Content="Send" Width="120" Click="SendBtn_Click" IsEnabled="False" Background="#FF151A23" Foreground="#FF838383"/>
         </DockPanel>
     </Grid>
 </Window>

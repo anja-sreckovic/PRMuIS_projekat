@@ -7,12 +7,14 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Text.RegularExpressions;
 
 namespace Client
 {
     public partial class MainWindow : Window
     {
         private Socket _sock;
+        private TcpClient _tcpClient;
         private CancellationTokenSource _cts;
         private Task _rxTask;
 
@@ -66,7 +68,41 @@ namespace Client
 
         private void Disconnect()
         {
-            
+            try
+            {
+                if (_cts != null)
+                {
+                    _cts.Cancel();
+                    _cts = null;
+                }
+
+                if (_sock != null)
+                {
+                    try { _sock.Shutdown(SocketShutdown.Both); }
+                    catch { }
+                    _sock.Close();
+                    _sock = null;
+                }
+
+                if (_tcpClient != null)
+                {
+                    try { _tcpClient.Close(); }
+                    catch { }
+                    _tcpClient = null;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("Disconnect error: " + ex.Message);
+            }
+
+            Dispatcher.Invoke(() =>
+            {
+                ConnectBtn.IsEnabled = true;
+                DisconnectBtn.IsEnabled = false;
+                SendBtn.IsEnabled = false;
+                StatusText.Text = "Disconnected";
+            });
         }
 
         private void SendBtn_Click(object sender, RoutedEventArgs e)
@@ -81,7 +117,30 @@ namespace Client
 
         private void SendCurrentMessage()
         {
-            
+            string msg = (MessageBox.Text ?? "").Trim();
+            if (msg.Length == 0) return;
+
+            try
+            {
+                byte[] data = Encoding.UTF8.GetBytes(msg);
+                if (_tcpClient != null && _tcpClient.Connected)
+                {
+                    // saljemo preko TCP konekcije
+                    NetworkStream ns = _tcpClient.GetStream();
+                    ns.Write(data, 0, data.Length);
+                }
+                else if (_sock != null)
+                {
+                    // dok se ne uspostavi TCP, saljemo preko UDP
+                    _sock.Send(data);
+                }
+                MessageBox.Clear();
+            }
+            catch (Exception ex)
+            {
+                Log("Send failed: " + ex.Message);
+                Disconnect();
+            }
         }
 
         private void ReceiveLoop(CancellationToken token)
@@ -105,6 +164,9 @@ namespace Client
 
                     string text = Encoding.UTF8.GetString(buf, 0, n);
                     Log(text);
+
+                    // očekujemo format: "IP: 127.0.0.1 Port: 1234"
+                    TryOpenTcpFromServerResponse(text);
                 }
                 catch (SocketException ex)
                 {
@@ -128,6 +190,60 @@ namespace Client
                 ChatBox.AppendText("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + line + "\n");
                 ChatBox.ScrollToEnd();
             });
+        }
+
+        private void TryOpenTcpFromServerResponse(string response)
+        {
+            // očekuje se format "IP: 127.0.0.1 Port: 1234"
+            if (string.IsNullOrWhiteSpace(response)) return;
+
+            try
+            {
+                var match = Regex.Match(response, @"IP:\s*(?<ip>[^\s]+)\s+Port:\s*(?<port>\d+)");
+                if (!match.Success) return;
+
+                string ipStr = match.Groups["ip"].Value;
+                string portStr = match.Groups["port"].Value;
+
+                IPAddress ip;
+                int port;
+                if (!IPAddress.TryParse(ipStr, out ip))
+                {
+                    Log("Neispravan IP u odgovoru servera: " + ipStr);
+                    return;
+                }
+                if (!int.TryParse(portStr, out port))
+                {
+                    Log("Neispravan port u odgovoru servera: " + portStr);
+                    return;
+                }
+
+                // zatvori prethodnu TCP konekciju ako postoji
+                if (_tcpClient != null)
+                {
+                    try { _tcpClient.Close(); }
+                    catch { }
+                    _tcpClient = null;
+                }
+
+                // otvaramo novu TCP konekciju
+                _tcpClient = new TcpClient();
+                _tcpClient.Connect(ip, port);
+
+                Log("Otvorena TCP konekcija na " + ip + ":" + port);
+
+                // nakon uspostavljanja TCP konekcije, ugasimo UDP soket
+                if (_sock != null)
+                {
+                    try { _sock.Shutdown(SocketShutdown.Both); } catch { }
+                    try { _sock.Close(); } catch { }
+                    _sock = null;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("Ne mogu da otvorim TCP konekciju: " + ex.Message);
+            }
         }
 
         protected override void OnClosed(EventArgs e)
