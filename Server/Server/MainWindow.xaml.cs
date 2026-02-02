@@ -21,6 +21,11 @@ namespace Server
         private readonly object _lock = new object();
         private int port;
 
+        private readonly Dictionary<Socket, Igrac> _igraci = new Dictionary<Socket, Igrac>();
+        private string _pendingNadimak;
+        private int _pendingBrojIgara;
+        private int _nextId = 1;
+
         private CancellationTokenSource _cts;
 
         public MainWindow()
@@ -117,9 +122,11 @@ namespace Server
                                 _ready[client] = true;
 
                             // proveri da li su svi trenutno povezani klijenti spremni
-                            bool allReady = _clients.Count > 0;
-                            foreach (var c in _clients)
+                            bool allReady = _igraci.Count > 0;
+                            foreach (var kvp in _igraci)
                             {
+                                Socket c = kvp.Key;
+
                                 bool isReady;
                                 if (!_ready.TryGetValue(c, out isReady) || !isReady)
                                 {
@@ -148,7 +155,7 @@ namespace Server
             {
                 lock (_lock)
                 {
-                    _clients.Remove(client);
+                    _igraci.Remove(client);
                     _ready.Remove(client);
                 }
                 SafeClose(client);
@@ -185,6 +192,11 @@ namespace Server
 
                         if (Regex.IsMatch(message, pattern))
                         {
+                            string[] delovi = message.Split(',');
+
+                            _pendingNadimak = delovi[0].Replace("PRIJAVA:", "").Trim();
+                            _pendingBrojIgara = delovi.Length - 1;
+
                             response = "IP: 127.0.0.1" + " Port: " + (port + 1);
                         }
                         else
@@ -220,8 +232,12 @@ namespace Server
                 while (_igra.Poll(100, SelectMode.SelectRead))
                 {
                     Socket client = _igra.Accept();
+
+                    Igrac igrac = new Igrac(_nextId++, _pendingNadimak, _pendingBrojIgara);
+
                     lock (_lock)
                     {
+                        _igraci.Add(client, igrac);
                         _clients.Add(client);
                         _ready[client] = false;
                     }
