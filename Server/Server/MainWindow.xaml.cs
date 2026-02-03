@@ -8,6 +8,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Media;
 
 namespace Server
 {
@@ -24,7 +25,11 @@ namespace Server
         private readonly Dictionary<Socket, Igrac> _igraci = new Dictionary<Socket, Igrac>();
         private string _pendingNadimak;
         private int _pendingBrojIgara;
+        private List<string> _pendingIgre;
         private int _nextId = 1;
+
+        // trening rezim: true ako je povezan samo jedan klijent
+        private bool _trening;
 
         private CancellationTokenSource _cts;
 
@@ -110,8 +115,113 @@ namespace Server
                         break;
                     }
 
-                    string message = Encoding.UTF8.GetString(buffer, 0, received);
+                    string message = Encoding.UTF8.GetString(buffer, 0, received).Trim();
                     Log("TCP poruka od " + client.RemoteEndPoint + ": " + message);
+
+                    Igrac igrac;
+                    lock (_lock)
+                    {
+                        if (!_igraci.TryGetValue(client, out igrac))
+                            continue;
+                    }
+
+                    // komande za anagram igru
+                    if (message.StartsWith("REC:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // proverimo da li je igrac prijavljen za igru anagrama ("an")
+                        if (igrac.Igre == null || !igrac.Igre.Contains("an"))
+                        {
+                            string info = $"Igrac {igrac.Nadimak} je poslao komandu za anagram, ali se nije prijavio za tu igru.";
+                            Log(info);
+
+                            // posaljemo istu poruku i klijentu
+                            try
+                            {
+                                byte[] resp = Encoding.UTF8.GetBytes(info);
+                                client.Send(resp);
+                            }
+                            catch (SocketException)
+                            {
+                                // ignorisemo gresku pri slanju ka klijentu
+                            }
+                            continue;
+                        }
+
+                        string rec = message.Substring(4).Trim();
+
+                        // u trening rezimu dozvoljavamo vise poruka,
+                        // u suprotnom prihvatamo samo prvu rec za ovog igraca
+                        bool dozvoljeno = true;
+                        if (!_trening && !string.IsNullOrEmpty(igrac.Anagram.Original))
+                        {
+                            dozvoljeno = false;
+                        }
+
+                        if (dozvoljeno)
+                        {
+                            try
+                            {
+                                igrac.Anagram.UcitajRec(rec);
+                                Log($"Igracu {igrac.Nadimak} postavljena rec za anagram: {rec}");
+                            }
+                            catch (Exception ex)
+                            {
+                                Log("Greska kod UcitajRec: " + ex.Message);
+                            }
+                        }
+                        else
+                        {
+                            Log($"Igrac {igrac.Nadimak} je pokusao da promeni rec za anagram, ali to nije dozvoljeno u ovom rezimu.");
+                        }
+                    }
+                    else if (message.StartsWith("ANAGRAM:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // proverimo da li je igrac prijavljen za igru anagrama ("an")
+                        if (igrac.Igre == null || !igrac.Igre.Contains("an"))
+                        {
+                            Log($"Igrac {igrac.Nadimak} je poslao komandu ANAGRAM, ali se nije prijavio za igru anagrama.");
+                            continue;
+                        }
+
+                        string predlog = message.Substring(8).Trim();
+
+                        // u trening rezimu dozvoljavamo vise predloga,
+                        // u suprotnom prihvatamo samo prvi predlog (ako je vec neki poen upisan, ignorisemo dalje)
+                        bool dozvoljeno = true;
+                        if (!_trening && igrac.poeni.Count > 0 && igrac.poeni[0] > 0)
+                        {
+                            dozvoljeno = false;
+                        }
+
+                        if (dozvoljeno)
+                        {
+                            igrac.Anagram.PostaviPredlog(predlog);
+                            int poeni = igrac.Anagram.ProveriAnagram();
+                            // upisujemo poene za igru anagrama u prvu igru (indeks 0)
+                            if (igrac.poeni.Count > 0)
+                            {
+                                igrac.poeni[0] += poeni;
+                            }
+
+                            string info = $"Igrac {igrac.Nadimak} predlozio anagram '{predlog}', dobija {poeni} poena, ukupno { (igrac.poeni.Count > 0 ? igrac.poeni[0] : 0) }";
+                            Log(info);
+
+                            // posaljemo istu poruku i klijentu
+                            try
+                            {
+                                byte[] resp = Encoding.UTF8.GetBytes(info);
+                                client.Send(resp);
+                            }
+                            catch (SocketException)
+                            {
+                                // ignorisemo gresku pri slanju ka klijentu
+                            }
+                        }
+                        else
+                        {
+                            Log($"Igrac {igrac.Nadimak} je poslao vise predloga za anagram, ali je dozvoljen samo jedan u ovom rezimu.");
+                        }
+                    }
 
                     // ako klijent posalje START, oznacavamo ga kao spremnog
                     if (string.Equals(message.Trim(), "START", StringComparison.OrdinalIgnoreCase))
@@ -121,7 +231,6 @@ namespace Server
                             if (_ready.ContainsKey(client))
                                 _ready[client] = true;
 
-                            // proveri da li su svi trenutno povezani klijenti spremni
                             bool allReady = _igraci.Count > 0;
                             foreach (var kvp in _igraci)
                             {
@@ -157,6 +266,9 @@ namespace Server
                 {
                     _igraci.Remove(client);
                     _ready.Remove(client);
+
+                    // azuriramo trening rezim posle diskonekcije
+                    _trening = _igraci.Count == 1;
                 }
                 SafeClose(client);
             }
@@ -197,6 +309,13 @@ namespace Server
                             _pendingNadimak = delovi[0].Replace("PRIJAVA:", "").Trim();
                             _pendingBrojIgara = delovi.Length - 1;
 
+                            // sacuvamo igre iz prijave (an|po|as)
+                            _pendingIgre = new List<string>();
+                            for (int i = 1; i < delovi.Length; i++)
+                            {
+                                _pendingIgre.Add(delovi[i].Trim());
+                            }
+
                             response = "IP: 127.0.0.1" + " Port: " + (port + 1);
                         }
                         else
@@ -233,13 +352,16 @@ namespace Server
                 {
                     Socket client = _igra.Accept();
 
-                    Igrac igrac = new Igrac(_nextId++, _pendingNadimak, _pendingBrojIgara);
+                    Igrac igrac = new Igrac(_nextId++, _pendingNadimak, _pendingBrojIgara, _pendingIgre);
 
                     lock (_lock)
                     {
                         _igraci.Add(client, igrac);
                         _clients.Add(client);
                         _ready[client] = false;
+
+                        // azuriramo trening rezim: true ako je tacno jedan klijent povezan
+                        _trening = _igraci.Count == 1;
                     }
 
                     Log("TCP klijent povezan: " + client.RemoteEndPoint);

@@ -149,24 +149,50 @@ namespace Client
 
             while (!token.IsCancellationRequested)
             {
-                Socket s = _sock;
-                if (s == null) break;
-
                 try
                 {
-                    int n = s.Receive(buf);
-                    if (n == 0)
+                    // prvo proveravamo UDP soket (za prijavu)
+                    Socket s = _sock;
+                    if (s != null)
                     {
-                        Log("Server je zatvorio konekciju.");
-                        Dispatcher.Invoke(() => Disconnect());
-                        break;
+                        // polling model za UDP: proveri da li ima podataka
+                        if (s.Poll(10000, SelectMode.SelectRead))
+                        {
+                            int n = s.Receive(buf);
+                            if (n == 0)
+                            {
+                                Log("Server je zatvorio UDP konekciju.");
+                                Dispatcher.Invoke(() => Disconnect());
+                                break;
+                            }
+
+                            string text = Encoding.UTF8.GetString(buf, 0, n);
+                            Log(text);
+
+                            // očekujemo format: "IP: 127.0.0.1 Port: 1234"
+                            TryOpenTcpFromServerResponse(text);
+                        }
                     }
 
-                    string text = Encoding.UTF8.GetString(buf, 0, n);
-                    Log(text);
+                    // zatim proveravamo da li postoji otvorena TCP konekcija
+                    TcpClient tcp = _tcpClient;
+                    if (tcp != null && tcp.Connected)
+                    {
+                        var socket = tcp.Client;
+                        if (socket != null && socket.Poll(10000, SelectMode.SelectRead))
+                        {
+                            int n = socket.Receive(buf);
+                            if (n == 0)
+                            {
+                                Log("Server je zatvorio TCP konekciju.");
+                                Dispatcher.Invoke(() => Disconnect());
+                                break;
+                            }
 
-                    // očekujemo format: "IP: 127.0.0.1 Port: 1234"
-                    TryOpenTcpFromServerResponse(text);
+                            string text = Encoding.UTF8.GetString(buf, 0, n);
+                            Log(text);
+                        }
+                    }
                 }
                 catch (SocketException ex)
                 {
