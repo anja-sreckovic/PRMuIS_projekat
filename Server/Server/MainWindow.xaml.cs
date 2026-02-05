@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO.Ports;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -27,6 +28,10 @@ namespace Server
         private int _pendingBrojIgara;
         private List<string> _pendingIgre;
         private int _nextId = 1;
+
+        private readonly Dictionary<Socket, PitanjaIOdgovori> _quizIgre = new Dictionary<Socket, PitanjaIOdgovori>();
+        string izabranaIgra = "";
+        private bool kvisko_iskoriscen = false;
 
         // trening rezim: true ako je povezan samo jedan klijent
         private bool _trening;
@@ -123,6 +128,42 @@ namespace Server
                     {
                         if (!_igraci.TryGetValue(client, out igrac))
                             continue;
+                    }
+
+                    if (message.Equals("an", StringComparison.OrdinalIgnoreCase) || message.Equals("po", StringComparison.OrdinalIgnoreCase) || message.Equals("as", StringComparison.OrdinalIgnoreCase))
+                    {
+                        izabranaIgra = message.ToLower();
+                        Log($"Igrac {igrac.Nadimak} izabrao igru: {izabranaIgra}");
+
+                        // osiguravamo da lista poena ima 3 elementa (an, po, as)
+                        while (igrac.poeni.Count < 3)
+                            igrac.poeni.Add(0);
+
+                        if (izabranaIgra == "po")
+                        {
+                            // inicijalizujemo kviz ako ne postoji
+                            if (!_quizIgre.ContainsKey(client))
+                                _quizIgre[client] = new PitanjaIOdgovori();
+
+                            var quiz = _quizIgre[client];
+
+                            // šaljemo prvo pitanje
+                            if (quiz.SledecePitanje())
+                            {
+                                string tekst = quiz.tek_pitanje + "\n a) DA\n b) NE\n (poslati: PO:a ili PO:b)\n (Kvisko: PO*:a)";
+                                client.Send(Encoding.UTF8.GetBytes(tekst));
+                            }
+                        }
+                        else if (izabranaIgra == "an")
+                        {
+                            client.Send(Encoding.UTF8.GetBytes("Igra anagram počinje! Pošalji REC:<reč>"));
+                        }
+                        else if (izabranaIgra == "as")
+                        {
+                            client.Send(Encoding.UTF8.GetBytes("Igra asocijacije počinje!"));
+                        }
+
+                        continue;
                     }
 
                     // komande za anagram igru
@@ -222,6 +263,49 @@ namespace Server
                             Log($"Igrac {igrac.Nadimak} je poslao vise predloga za anagram, ali je dozvoljen samo jedan u ovom rezimu.");
                         }
                     }
+                    else if (message.StartsWith("PO", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (izabranaIgra != "po")
+                            continue;
+
+                        bool kvisko = message.StartsWith("PO*");
+                        char odgovor = message.Last(); // a ili b
+
+                        var quiz = _quizIgre[client];
+
+                        int poeni = quiz.ObradiOdgovor(odgovor, kvisko);
+
+                        if (kvisko && !kvisko_iskoriscen)
+                        {
+                            poeni = quiz.ObradiOdgovor(odgovor, kvisko);
+                            kvisko_iskoriscen = true;
+                        }
+                        else
+                            poeni = quiz.ObradiOdgovor(odgovor, !kvisko);
+
+                        // osiguravamo da lista poena ima najmanje 3 elementa
+                        while (igrac.poeni.Count < 3)
+                                igrac.poeni.Add(0);
+
+                        int idx = 1; // poeni za PO igru
+                        igrac.poeni[idx] += poeni;
+
+                        string info = $"Odgovor {(poeni > 0 ? "TAČAN" : "NETAČAN")} | +{poeni} poena\n";
+                        client.Send(Encoding.UTF8.GetBytes(info));
+
+                        // sledeće pitanje
+                        if (quiz.SledecePitanje())
+                        {
+                            string tekst = quiz.tek_pitanje + "\n a) DA\n b) NE\n (PO:a ili PO:b)\n (Kvisko: PO*:a)";
+                            client.Send(Encoding.UTF8.GetBytes(tekst));
+                        }
+                        else
+                        {
+                            client.Send(Encoding.UTF8.GetBytes("Kraj igre pitanja."));
+                            kvisko_iskoriscen = false;
+                        }
+                    }
+
 
                     // ako klijent posalje START, oznacavamo ga kao spremnog
                     if (string.Equals(message.Trim(), "START", StringComparison.OrdinalIgnoreCase))
@@ -247,6 +331,9 @@ namespace Server
                             if (allReady)
                             {
                                 Log("IGRA POCINJE!");
+
+                                Log("Izaberite igru:\n\"an\" -> anagram\n\"po\" -> pitanja i odgovori\n\"as\"->asocijacije\n");
+                                Log("NAPOMENA: igre koje niste naveli tokom prijave NECETE MOCI IGRATI.");
                             }
                         }
                     }
