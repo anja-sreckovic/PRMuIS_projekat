@@ -109,6 +109,8 @@ namespace Server
         {
             byte[] buffer = new byte[1024];
 
+            bool disconnect = false;
+
             try
             {
                 while (true)
@@ -139,6 +141,21 @@ namespace Server
                         while (igrac.poeni.Count < 3)
                             igrac.poeni.Add(0);
 
+                        if (izabranaIgra == "as")
+                        {
+                            igrac.Asoc = new Asocijacija();
+                            igrac.Asoc.UcitajIzFajla("asocijacije.txt");
+
+                            client.Send(Encoding.UTF8.GetBytes(
+                                "ASOCIJACIJE POCINJU\n" +
+                                "Otvori: A1 B3\n" +
+                                "Kolona: A:ODGOVOR\n" +
+                                "Konacno: K:ODGOVOR" +
+                                "\n\nIzaberite kolonu! (A-D)(1-4)"
+                            ));
+                            continue;
+                        }
+
                         if (izabranaIgra == "po")
                         {
                             // inicijalizujemo kviz ako ne postoji
@@ -160,7 +177,12 @@ namespace Server
                         }
                         else if (izabranaIgra == "as")
                         {
-                            client.Send(Encoding.UTF8.GetBytes("Igra asocijacije počinje!"));
+                            igrac.Asoc = new Asocijacija();
+                            igrac.Asoc.UcitajIzFajla("asocijacije.txt");
+                            igrac.PogresniPokusaji = 0;
+
+                            string stanje = igrac.Asoc.PrikaziAsocijaciju();
+                            client.Send(Encoding.UTF8.GetBytes("Igra asocijacije počinje!\n" + stanje));
                         }
 
                         continue;
@@ -303,6 +325,81 @@ namespace Server
                         {
                             client.Send(Encoding.UTF8.GetBytes("Kraj igre pitanja."));
                             kvisko_iskoriscen = false;
+                        }
+                    }
+                    else if (izabranaIgra == "as" && igrac.Asoc != null)
+                    {
+                        string msg = message.Trim().ToUpper();
+
+                        // --- Otvaranje polja ---
+                        if (msg.Length == 2 && char.IsLetter(msg[0]) && char.IsDigit(msg[1]))
+                        {
+                            int kolona = msg[0] - 'A';
+                            int red = int.Parse(msg[1].ToString()) - 1;
+
+                            if (kolona < 0 || kolona >= igrac.Asoc.BrojKolona ||
+                                red < 0 || red >= igrac.Asoc.BrojPoljaPoKoloni)
+                            {
+                                client.Send(Encoding.UTF8.GetBytes("Nevazce polje!"));
+                                return;
+                            }
+
+                            string vrednost = igrac.Asoc.OtvoriPolje(kolona, red);
+                            string stanje = igrac.Asoc.PrikaziAsocijaciju();
+                            client.Send(Encoding.UTF8.GetBytes($"Otvoreno polje {msg}: {vrednost}\n{stanje}"));
+                        }
+                        // --- Pogadjanje kolone ---
+                        else if (msg.Contains(":") && msg[0] >= 'A' && msg[0] < 'A' + igrac.Asoc.BrojKolona)
+                        {
+                            int kolona = msg[0] - 'A';
+                            string odgovor = msg.Substring(2).Trim();
+
+                            while (igrac.poeni.Count <= 2)
+                                igrac.poeni.Add(0);
+
+                            if (igrac.Asoc.ProveriKolonu(kolona, odgovor))
+                            {
+                                int poeni = igrac.Asoc.PoeniZaKolonu(kolona);
+                                igrac.poeni[2] += poeni;
+                                igrac.PogresniPokusaji = 0;
+
+                                string stanje = igrac.Asoc.PrikaziAsocijaciju();
+                                client.Send(Encoding.UTF8.GetBytes($"TACNO! Kolona {msg[0]} resena, +{poeni} poena.\n{stanje}"));
+                            }
+                            else
+                            {
+                                igrac.PogresniPokusaji++;
+                                client.Send(Encoding.UTF8.GetBytes($"NETACNO! Pokusaji zaredom: {igrac.PogresniPokusaji}/5"));
+                            }
+                        }
+                        // --- Pogadjanje konacnog resenja ---
+                        else if (msg.StartsWith("K:"))
+                        {
+                            string odgovor = msg.Substring(2).Trim();
+
+                            while (igrac.poeni.Count <= 2)
+                                igrac.poeni.Add(0);
+
+                            if (igrac.Asoc.ProveriKonacno(odgovor))
+                            {
+                                igrac.poeni[2] += 10;
+                                igrac.PogresniPokusaji = 0;
+
+                                client.Send(Encoding.UTF8.GetBytes($"KONACNO RESEENJE TACNO! +10 poena"));
+                                izabranaIgra = "";
+                            }
+                            else
+                            {
+                                igrac.PogresniPokusaji++;
+                                client.Send(Encoding.UTF8.GetBytes($"NETACNO konacno resenje! Pokusaji zaredom: {igrac.PogresniPokusaji}/5"));
+                            }
+                        }
+
+                        // --- Kraj igre zbog 5 gresaka ---
+                        if (igrac.PogresniPokusaji >= 5)
+                        {
+                            client.Send(Encoding.UTF8.GetBytes("Igra asocijacije zavrsena zbog 5 gresaka!"));
+                            izabranaIgra = "";
                         }
                     }
 

@@ -1,0 +1,6 @@
+﻿Patike;Muzika;Pandora;Crna
+Trka;Potkovica;Rep;Troja
+Skola;Segrt;Majstor;Radionica
+Cilj;Čišćenje;Smirenje;Plaćanje
+ResenjaKolona: Kutija;Konj;Zanat;Sredstvo
+KonacnoResenje: Alat

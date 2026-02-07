@@ -15,6 +15,8 @@ namespace Server
         public List<string> Igre { get; }
         public AnagramIgra Anagram { get; }
         public bool Kvisko { get; set; }
+        public Asocijacija Asoc { get; set; } = null;
+        public int PogresniPokusaji { get; set; } = 0;
 
         public Igrac(int ID, string nadimak,int broj_Igara, IEnumerable<string> igre)
         {
