@@ -12,9 +12,6 @@ namespace Server
 
         public void UcitajRec(string rec)
         {
-            if (string.IsNullOrWhiteSpace(rec) || rec.Length < 7)
-                throw new ArgumentException("Rec mora imati najmanje 7 karaktera.", nameof(rec));
-
             _original = rec.Trim();
         }
 
@@ -40,21 +37,24 @@ namespace Server
             a = a.Replace(" ", string.Empty).ToLowerInvariant();
             b = b.Replace(" ", string.Empty).ToLowerInvariant();
 
-            if (a.Length != b.Length)
-                return false;
-
             var cntA = new int[256];
             var cntB = new int[256];
 
             for (int i = 0; i < a.Length; i++)
             {
                 cntA[(byte)a[i]]++;
+            }
+
+            for (int i = 0; i < b.Length; i++)
+            {
                 cntB[(byte)b[i]]++;
             }
 
+            // proveravamo da se svako slovo iz predloga (b)
+            // ne pojavljuje vise puta nego u originalu (a)
             for (int i = 0; i < 256; i++)
             {
-                if (cntA[i] != cntB[i])
+                if (cntB[i] > cntA[i])
                     return false;
             }
 

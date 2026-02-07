@@ -22,7 +22,10 @@ namespace Server
         {
             this.ID_igraca = ID;
             this.Nadimak = nadimak;
-            poeni = new List<int>(new int[broj_Igara]);
+            // inicijalno -1 znaci da igra jos nije igrana (0 je validan broj poena)
+            poeni = new List<int>();
+            for (int i = 0; i < broj_Igara; i++)
+                poeni.Add(-1);
             Igre = new List<string>(igre ?? new List<string>());
             Kvisko = false;
             Anagram = new AnagramIgra();

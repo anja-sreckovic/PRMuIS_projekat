@@ -30,6 +30,23 @@ namespace Server
         private int _nextId = 1;
 
         private readonly Dictionary<Socket, PitanjaIOdgovori> _quizIgre = new Dictionary<Socket, PitanjaIOdgovori>();
+        // broj tacnih pogodaka po reci u igri anagram (redni broj tacnog odgovora)
+        private int _anagramCorrectOrder = 0;
+        // reci za igru anagrama (svaka duzine 10 slova)
+        private readonly string[] _anagramReci = new string[]
+        {
+            "PROGRAMERI",
+            "KOMPJUTER",
+            "TASTATURA",
+            "MONTIRATI", // prilagoditi reci po potrebi
+            "ALGORITMIK",
+            "SOFTVERSKI",
+            "INFORMATIKA",
+            "APLIKACIJA",
+            "KRIPTOVANJE",
+            "INTERNETPROTOKOL"
+        };
+        private readonly Random _rnd = new Random();
         string izabranaIgra = "";
         private bool kvisko_iskoriscen = false;
 
@@ -109,8 +126,6 @@ namespace Server
         {
             byte[] buffer = new byte[1024];
 
-            bool disconnect = false;
-
             try
             {
                 while (true)
@@ -158,6 +173,11 @@ namespace Server
 
                         if (izabranaIgra == "po")
                         {
+                            if (igrac.Igre == null || !igrac.Igre.Contains("po"))
+                            {
+                                Log($"Igrac {igrac.Nadimak} je poslao komandu po, ali se nije prijavio za igru pitanja i odgovori.");
+                                continue;
+                            }
                             // inicijalizujemo kviz ako ne postoji
                             if (!_quizIgre.ContainsKey(client))
                                 _quizIgre[client] = new PitanjaIOdgovori();
@@ -173,10 +193,35 @@ namespace Server
                         }
                         else if (izabranaIgra == "an")
                         {
-                            client.Send(Encoding.UTF8.GetBytes("Igra anagram počinje! Pošalji REC:<reč>"));
+                            if (igrac.Igre == null || !igrac.Igre.Contains("an"))
+                            {
+                                Log($"Igrac {igrac.Nadimak} je poslao komandu an, ali se nije prijavio za igru anagrama.");
+                                continue;
+                            }
+                            // izaberi nasumicnu rec za anagram iz niza
+                            string rec = _anagramReci[_rnd.Next(_anagramReci.Length)];
+
+                            try
+                            {
+                                igrac.Anagram.UcitajRec(rec);
+                                // nova rec -> resetujemo redosled tacnih odgovora
+                                _anagramCorrectOrder = 0;
+                            }
+                            catch (Exception ex)
+                            {
+                                Log("Greska kod UcitajRec (anagram start): " + ex.Message);
+                            }
+
+                            // obavestavamo klijenta koja rec je izabrana
+                            client.Send(Encoding.UTF8.GetBytes("Igra anagram pocinje! Rec za anagram je: " + rec));
                         }
                         else if (izabranaIgra == "as")
                         {
+                            if (igrac.Igre == null || !igrac.Igre.Contains("as"))
+                            {
+                                Log($"Igrac {igrac.Nadimak} je poslao komandu as, ali se nije prijavio za igru asocijacije.");
+                                continue;
+                            }
                             igrac.Asoc = new Asocijacija();
                             igrac.Asoc.UcitajIzFajla("asocijacije.txt");
                             igrac.PogresniPokusaji = 0;
@@ -187,56 +232,6 @@ namespace Server
 
                         continue;
                     }
-
-                    // komande za anagram igru
-                    if (message.StartsWith("REC:", StringComparison.OrdinalIgnoreCase))
-                    {
-                        // proverimo da li je igrac prijavljen za igru anagrama ("an")
-                        if (igrac.Igre == null || !igrac.Igre.Contains("an"))
-                        {
-                            string info = $"Igrac {igrac.Nadimak} je poslao komandu za anagram, ali se nije prijavio za tu igru.";
-                            Log(info);
-
-                            // posaljemo istu poruku i klijentu
-                            try
-                            {
-                                byte[] resp = Encoding.UTF8.GetBytes(info);
-                                client.Send(resp);
-                            }
-                            catch (SocketException)
-                            {
-                                // ignorisemo gresku pri slanju ka klijentu
-                            }
-                            continue;
-                        }
-
-                        string rec = message.Substring(4).Trim();
-
-                        // u trening rezimu dozvoljavamo vise poruka,
-                        // u suprotnom prihvatamo samo prvu rec za ovog igraca
-                        bool dozvoljeno = true;
-                        if (!_trening && !string.IsNullOrEmpty(igrac.Anagram.Original))
-                        {
-                            dozvoljeno = false;
-                        }
-
-                        if (dozvoljeno)
-                        {
-                            try
-                            {
-                                igrac.Anagram.UcitajRec(rec);
-                                Log($"Igracu {igrac.Nadimak} postavljena rec za anagram: {rec}");
-                            }
-                            catch (Exception ex)
-                            {
-                                Log("Greska kod UcitajRec: " + ex.Message);
-                            }
-                        }
-                        else
-                        {
-                            Log($"Igrac {igrac.Nadimak} je pokusao da promeni rec za anagram, ali to nije dozvoljeno u ovom rezimu.");
-                        }
-                    }
                     else if (message.StartsWith("ANAGRAM:", StringComparison.OrdinalIgnoreCase))
                     {
                         // proverimo da li je igrac prijavljen za igru anagrama ("an")
@@ -246,7 +241,9 @@ namespace Server
                             continue;
                         }
 
-                        string predlog = message.Substring(8).Trim();
+                        // podrzavamo i kvisko za anagram: ANAGRAM*:predlog
+                        bool kvisko = message.StartsWith("ANAGRAM*:", StringComparison.OrdinalIgnoreCase);
+                        string predlog = message.Substring(kvisko ? 9 : 8).Trim();
 
                         // u trening rezimu dozvoljavamo vise predloga,
                         // u suprotnom prihvatamo samo prvi predlog (ako je vec neki poen upisan, ignorisemo dalje)
@@ -259,14 +256,33 @@ namespace Server
                         if (dozvoljeno)
                         {
                             igrac.Anagram.PostaviPredlog(predlog);
-                            int poeni = igrac.Anagram.ProveriAnagram();
-                            // upisujemo poene za igru anagrama u prvu igru (indeks 0)
-                            if (igrac.poeni.Count > 0)
+                            int bazniPoeni = igrac.Anagram.ProveriAnagram();
+
+                            int poeni = 0;
+                            if (bazniPoeni > 0)
                             {
-                                igrac.poeni[0] += poeni;
+                                // prvi tacan odgovor dobija pun broj poena,
+                                // svaki sledeci tacan -15% u odnosu na prethodnog
+                                double faktor = Math.Pow(0.85, _anagramCorrectOrder);
+                                poeni = (int)Math.Round(bazniPoeni * faktor);
+                                // kvisko u anagram igri: jednom dozvoljen dupli broj poena
+                                if (kvisko && !igrac.Kvisko)
+                                {
+                                    poeni *= 2;
+                                    igrac.Kvisko = true;
+                                }
+                                _anagramCorrectOrder++;
+
+                                // upisujemo poene za igru anagrama u prvu igru (indeks 0)
+                                if (igrac.poeni.Count > 0)
+                                {
+                                    if (igrac.poeni[0] == -1)
+                                        igrac.poeni[0] = 0; // prvi put igra ovu igru
+                                    igrac.poeni[0] += poeni;
+                                }
                             }
 
-                            string info = $"Igrac {igrac.Nadimak} predlozio anagram '{predlog}', dobija {poeni} poena, ukupno { (igrac.poeni.Count > 0 ? igrac.poeni[0] : 0) }";
+                            string info = $"Igrac {igrac.Nadimak}, dobija {poeni} poena, ukupno { (igrac.poeni.Count > 0 ? igrac.poeni[0] : 0) }";
                             Log(info);
 
                             // posaljemo istu poruku i klijentu
@@ -279,6 +295,23 @@ namespace Server
                             {
                                 // ignorisemo gresku pri slanju ka klijentu
                             }
+
+                            // nakon sto igrac zavrsi pokusaj u igri anagrama,
+                            // ponovo ponudimo izbor igara
+                            string sel2 = "Izaberite igru:\n\"an\" -> anagram\n\"po\" -> pitanja i odgovori\n\"as\"->asocijacije\n";
+                            string sel3 = "NAPOMENA: igre koje niste naveli tokom prijave NECETE MOCI IGRATI.";
+                            try
+                            {
+                                byte[] data = Encoding.UTF8.GetBytes(sel2 + "\n" + sel3 + "\n");
+                                client.Send(data);
+                            }
+                            catch (SocketException)
+                            {
+                                // ignorisemo gresku pri slanju
+                            }
+
+                            // proverimo da li je zavrsena cela partija (sve igre) i proglasimo pobednika
+                            ProveriIKompletirajIgruAkoGotova();
                         }
                         else
                         {
@@ -287,6 +320,11 @@ namespace Server
                     }
                     else if (message.StartsWith("PO", StringComparison.OrdinalIgnoreCase))
                     {
+                        if (igrac.Igre == null || !igrac.Igre.Contains("po"))
+                        {
+                            Log($"Igrac {igrac.Nadimak} je poslao komandu PO, ali se nije prijavio za igru pitanja i odgovori.");
+                            continue;
+                        }
                         if (izabranaIgra != "po")
                             continue;
 
@@ -310,6 +348,8 @@ namespace Server
                                 igrac.poeni.Add(0);
 
                         int idx = 1; // poeni za PO igru
+                        if (igrac.poeni[idx] == -1)
+                            igrac.poeni[idx] = 0; // prvi put igra ovu igru
                         igrac.poeni[idx] += poeni;
 
                         string info = $"Odgovor {(poeni > 0 ? "TAČAN" : "NETAČAN")} | +{poeni} poena\n";
@@ -325,10 +365,32 @@ namespace Server
                         {
                             client.Send(Encoding.UTF8.GetBytes("Kraj igre pitanja."));
                             kvisko_iskoriscen = false;
+
+                            // nakon sto igrac zavrsi igru pitanja i odgovori,
+                            // ponovo ponudimo izbor igara
+                            string sel2 = "Izaberite igru:\n\"an\" -> anagram\n\"po\" -> pitanja i odgovori\n\"as\"->asocijacije\n";
+                            string sel3 = "NAPOMENA: igre koje niste naveli tokom prijave NECETE MOCI IGRATI.";
+                            try
+                            {
+                                byte[] data = Encoding.UTF8.GetBytes(sel2 + "\n" + sel3 + "\n");
+                                client.Send(data);
+                            }
+                            catch (SocketException)
+                            {
+                                // ignorisemo gresku pri slanju
+                            }
+
+                            // proverimo da li je zavrsena cela partija (sve igre) i proglasimo pobednika
+                            ProveriIKompletirajIgruAkoGotova();
                         }
                     }
                     else if (izabranaIgra == "as" && igrac.Asoc != null)
                     {
+                        if (igrac.Igre == null || !igrac.Igre.Contains("as"))
+                        {
+                            Log($"Igrac {igrac.Nadimak} je poslao komandu as, ali se nije prijavio za igru asocijacije.");
+                            continue;
+                        }
                         string msg = message.Trim().ToUpper();
 
                         // --- Otvaranje polja ---
@@ -360,6 +422,8 @@ namespace Server
                             if (igrac.Asoc.ProveriKolonu(kolona, odgovor))
                             {
                                 int poeni = igrac.Asoc.PoeniZaKolonu(kolona);
+                                if (igrac.poeni[2] == -1)
+                                    igrac.poeni[2] = 0; // prvi put igra ovu igru
                                 igrac.poeni[2] += poeni;
                                 igrac.PogresniPokusaji = 0;
 
@@ -382,10 +446,12 @@ namespace Server
 
                             if (igrac.Asoc.ProveriKonacno(odgovor))
                             {
+                                if (igrac.poeni[2] == -1)
+                                    igrac.poeni[2] = 0; // prvi put igra ovu igru
                                 igrac.poeni[2] += 10;
                                 igrac.PogresniPokusaji = 0;
 
-                                client.Send(Encoding.UTF8.GetBytes($"KONACNO RESEENJE TACNO! +10 poena"));
+                                client.Send(Encoding.UTF8.GetBytes($"KONACNO RESENJE TACNO! +10 poena"));
                                 izabranaIgra = "";
                             }
                             else
@@ -400,6 +466,22 @@ namespace Server
                         {
                             client.Send(Encoding.UTF8.GetBytes("Igra asocijacije zavrsena zbog 5 gresaka!"));
                             izabranaIgra = "";
+
+                            // nakon zavrsetka igre asocijacije, ponovo ponudimo izbor igara
+                            string sel2 = "Izaberite igru:\n\"an\" -> anagram\n\"po\" -> pitanja i odgovori\n\"as\"->asocijacije\n";
+                            string sel3 = "NAPOMENA: igre koje niste naveli tokom prijave NECETE MOCI IGRATI.";
+                            try
+                            {
+                                byte[] data = Encoding.UTF8.GetBytes(sel2 + "\n" + sel3 + "\n");
+                                client.Send(data);
+                            }
+                            catch (SocketException)
+                            {
+                                // ignorisemo gresku pri slanju
+                            }
+
+                            // proverimo da li je zavrsena cela partija (sve igre) i proglasimo pobednika
+                            ProveriIKompletirajIgruAkoGotova();
                         }
                     }
 
@@ -427,10 +509,23 @@ namespace Server
 
                             if (allReady)
                             {
-                                Log("IGRA POCINJE!");
+                                string l1 = "IGRA POCINJE!";
+                                string l2 = "Izaberite igru:\n\"an\" -> anagram\n\"po\" -> pitanja i odgovori\n\"as\"->asocijacije\n";
+                                string l3 = "NAPOMENA: igre koje niste naveli tokom prijave NECETE MOCI IGRATI.";
 
-                                Log("Izaberite igru:\n\"an\" -> anagram\n\"po\" -> pitanja i odgovori\n\"as\"->asocijacije\n");
-                                Log("NAPOMENA: igre koje niste naveli tokom prijave NECETE MOCI IGRATI.");
+                                // posaljemo poruke svim klijentima
+                                foreach (var c in _clients)
+                                {
+                                    try
+                                    {
+                                        byte[] data = Encoding.UTF8.GetBytes(l1 + "\n" + l2 + "\n" + l3 + "\n");
+                                        c.Send(data);
+                                    }
+                                    catch (SocketException)
+                                    {
+                                        // ignorisemo greske slanja prema pojedinacnim klijentima
+                                    }
+                                }
                             }
                         }
                     }
@@ -585,6 +680,84 @@ namespace Server
         private void BroadcastBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
         {
 
+        }
+
+        // Proverava da li su svi igraci odigrali sve igre za koje su se prijavili
+        // i ako jesu, salje svima poruku o pobedniku.
+        private void ProveriIKompletirajIgruAkoGotova()
+        {
+            if (_trening)
+                return; // u trening rezimu nema pobednika
+
+            lock (_lock)
+            {
+                if (_igraci.Count == 0)
+                    return;
+
+                // proveri da li su svi igraci zavrsili sve igre za koje su se prijavili
+                foreach (var kvp in _igraci)
+                {
+                    Igrac igrac = kvp.Value;
+
+                    // za svaku igru u listi Igre proveri da li postoji slot u listi poena
+                    foreach (var igraKod in igrac.Igre)
+                    {
+                        int idx = -1;
+                        if (string.Equals(igraKod, "an", StringComparison.OrdinalIgnoreCase)) idx = 0;
+                        else if (string.Equals(igraKod, "po", StringComparison.OrdinalIgnoreCase)) idx = 1;
+                        else if (string.Equals(igraKod, "as", StringComparison.OrdinalIgnoreCase)) idx = 2;
+
+                        if (idx < 0)
+                            continue;
+
+                        if (igrac.poeni.Count <= idx)
+                            return; // igrac jos nema slot za ovu igru -> partija jos nije gotova
+
+                        // -1 znaci da igra jos nije odigrana; 0 je validan rezultat
+                        if (igrac.poeni[idx] == -1)
+                            return; // igrac jos nije odigrao ovu prijavljenu igru
+                    }
+                }
+
+                // svi igraci imaju poene slotove za sve prijavljene igre -> racunamo pobednika
+                Igrac pobednik = null;
+                int maxPoena = int.MinValue;
+
+                foreach (var kvp in _igraci)
+                {
+                    Igrac igrac = kvp.Value;
+                    int ukupno = 0;
+                    if (igrac.poeni != null)
+                    {
+                        foreach (int p in igrac.poeni)
+                            ukupno += p;
+                    }
+
+                    if (ukupno > maxPoena)
+                    {
+                        maxPoena = ukupno;
+                        pobednik = igrac;
+                    }
+                }
+
+                if (pobednik == null)
+                    return;
+
+                string poruka = "KRAJ IGRE! Pobednik je " + pobednik.Nadimak + " sa " + maxPoena + " poena.";
+                byte[] dataBytes = Encoding.UTF8.GetBytes(poruka);
+
+                foreach (var c in _clients)
+                {
+                    try
+                    {
+                        c.Send(dataBytes);
+                    }
+                    catch (SocketException)
+                    {
+                        // ignorisemo greske slanja
+                    }
+                }
+            }
         }
     }
 }
