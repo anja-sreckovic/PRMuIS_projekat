@@ -554,11 +554,6 @@ namespace Server
             }
         }
 
-        private void BroadcastBtn_Click(object sender, RoutedEventArgs e)
-        {
-            
-        }
-
         private void ServerLoop(CancellationToken token)
         {
             byte[] buffer = new byte[1024];
@@ -676,11 +671,6 @@ namespace Server
         {
             StopServer();
             base.OnClosed(e);
-        }
-
-        private void BroadcastBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
-        {
-
         }
 
         // Proverava da li su svi igraci odigrali sve igre za koje su se prijavili
