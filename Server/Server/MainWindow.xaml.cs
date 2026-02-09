@@ -453,6 +453,7 @@ namespace Server
 
                                 client.Send(Encoding.UTF8.GetBytes($"KONACNO RESENJE TACNO! +10 poena"));
                                 izabranaIgra = "";
+                                ProveriIKompletirajIgruAkoGotova();
                             }
                             else
                             {

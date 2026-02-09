@@ -41,19 +41,5 @@
                  TextWrapping="Wrap" FontFamily="Consolas" FontSize="14"
                  Background="#FF1A0A0A" Foreground="#FFFF4444" BorderBrush="#FFFF4444" BorderThickness="1"
                  Padding="6"/>
-
-        <!-- Donji broadcast panel -->
-        <DockPanel Grid.Row="2" HorizontalAlignment="Center" LastChildFill="False">
-            <TextBox x:Name="BroadcastBox" Width="400" DockPanel.Dock="Left" Height="32" Margin="0,0,8,0"
-                     VerticalContentAlignment="Center" TextChanged="BroadcastBox_TextChanged"
-                     Background="#FF1A0A0A" Foreground="#FFFF4444" BorderBrush="#FFFF4444" BorderThickness="1"
-                     FontWeight="Bold" Padding="4"/>
-            <Button Content="Broadcast" Width="120" Height="32" Click="BroadcastBtn_Click"
-                    Background="#FFFF4444" Foreground="Black" FontWeight="Bold" BorderThickness="0">
-                <Button.Effect>
-                    <DropShadowEffect Color="#FFFF4444" ShadowDepth="0" BlurRadius="12"/>
-                </Button.Effect>
-            </Button>
-        </DockPanel>
     </Grid>
 </Window>
